@@ -1,1 +1,4 @@
+numpy>=1.19.0
 torch>=1.7.0
+torchvision>=0.8.2
+typer>=0.3.2

@@ -1,5 +1,5 @@
 import torch
-from torch import nn, Tensor
+import torch.nn as nn
 
 
 class UNet(nn.Module):
@@ -40,7 +40,8 @@ class UNet(nn.Module):
         self.output = nn.Conv2d(f, outputs, kernel_size=1)
 
     def _conv_block(self, in_channels: int, out_channels: int) -> nn.Module:
-        """Creates a sequential block, containing two composite layers in series with (convolution, batch norm, relu activation).
+        """Creates a sequential block, containing two composite layers in series with
+        (convolution, batch norm, relu activation).
 
         :param in_channels: number of input channels for the current block (2nd dimension of the batch)
         :type in_channels:  int
@@ -54,13 +55,13 @@ class UNet(nn.Module):
                              nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1),
                              nn.BatchNorm2d(num_features=out_channels), nn.ReLU(inplace=True))
 
-    def forward(self, batch: Tensor):
-        """Encodes the given batch of images into a semanticaly meaningful vector.
+    def forward(self, batch: torch.Tensor) -> torch.Tensor:
+        """Encodes the given batch of images into a semantically meaningful vector.
 
         :param batch:   image batch of size [batch, channels, height, width]
-        :type batch:    Tensor
+        :type batch:    torch.Tensor
         :return:        tensor [batch, 1024, h, w], where h, w depend on the input dimension
-        :rtype:         Tensor
+        :rtype:         torch.Tensor
         """
         print(batch.size())
         f1 = self.encoder1(batch)
