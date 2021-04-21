@@ -9,14 +9,17 @@ Well, it's a bit for fun and a bit for learning purposes.
 
 ## Classification
 CV models aimed at classification tasks, with a standard classifier head.
+
 ### Current models:
 - ResNet variations (18, 34, 50, 101, 152)
+- Xception (8 mid-flow blocks)
 
 ## Segmentation
 Models for semantic and/or instance segmentation, including backbones when necessary.
 
 ### Current backbones:
 - ResNet variants (18, 34, 50, 101, 152)
+- Xception variants (12, 20 middle flow blocks)
 
 ### Current models
 - UNet
