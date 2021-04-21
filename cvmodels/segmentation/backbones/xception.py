@@ -72,7 +72,7 @@ class XceptionBackbone(nn.Module):
         x = self.conv2(x)
         x = self.bn2(x)
         x = self.block1(x)
-        low_level_features = x
+        skip = x
         x = F.relu(x)
         x = self.block2(x)
         x = self.block3(x)
@@ -90,7 +90,7 @@ class XceptionBackbone(nn.Module):
         x = self.conv5(x)
         x = self.bn5(x)
         x = self.relu(x)
-        return x, low_level_features
+        return x, skip
 
 
 if __name__ == "__main__":
