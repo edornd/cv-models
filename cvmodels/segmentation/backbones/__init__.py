@@ -15,11 +15,11 @@ class Backbone(nn.Module):
         """
         return 0
 
-    def output_features(self) -> int:
-        """Gets the final output size for the current backbone.
+    def output_features(self) -> Tuple[int, int]:
+        """Gets the final output sizes for the current backbone, both low and high dimensionality.
 
-        :return: int representing the number of feature maps in output
-        :rtype: int
+        :return: tuple representing the number of feature maps in output in the high and low level layers
+        :rtype: Tuple[int, int]
         """
         return 0
 
@@ -29,6 +29,6 @@ class Backbone(nn.Module):
         :param batch: input tensor, typically [batch, channels, height, width]
         :type batch: Tensor
         :return: usualy a backbone returns a set of tensors, in deeplab at most 2
-        :rtype: Tuple[Tensor]
+        :rtype: Tuple[Tensor, Tensor]
         """
-        return None
+        return super().forward(batch)

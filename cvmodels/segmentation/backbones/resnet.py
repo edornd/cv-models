@@ -55,7 +55,7 @@ class ResNetBackbone(ResNet, Backbone):
         return self.output_stride
 
     def output_features(self) -> int:
-        return 2048
+        return 2048, 256
 
     def backbone_group(self,
                        block: Type[ResidualBlock],
@@ -134,4 +134,7 @@ if __name__ == "__main__":
     """
     x = torch.rand((1, 3, 512, 512))
     model = ResNetBackbone(variant=ResNetVariants.RN50, output_strides=OutputStrides.OS16)
-    print(model(x).size())
+    model.eval()
+    with torch.no_grad():
+        a, b = model(x)
+        print(a.size(), b.size())

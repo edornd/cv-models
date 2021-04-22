@@ -3,7 +3,7 @@ from typing import Type, Tuple
 import torch
 import torch.nn as nn
 
-from cvmodels.segmentation.backbones import Backbone, resnet as rn
+from cvmodels.segmentation.backbones import resnet as rn, xception as xc
 
 
 class ASPPVariants(Enum):
@@ -46,7 +46,8 @@ class ASPPModule(nn.Module):
         self.aspp4 = self.assp_block(in_channels, 256, 3, dilations[3], dilations[3], batch_norm=batch_norm)
         # this is redoncolous, but it's described in the paper: bring it down to 1x1 tensor and upscale
         self.avgpool = nn.Sequential(nn.AdaptiveAvgPool2d((1, 1)),
-                                     nn.Conv2d(in_channels, 256, kernel_size=1, bias=False), batch_norm(256),
+                                     nn.Conv2d(in_channels, 256, kernel_size=1, bias=False),
+                                     batch_norm(256),
                                      nn.ReLU(inplace=True),
                                      nn.Upsample((h, w), mode="bilinear", align_corners=True))
         self.merge = self.assp_block(256 * 5, 256, kernel=1, padding=0, dilation=1, batch_norm=batch_norm)
@@ -104,6 +105,9 @@ class ASPPModule(nn.Module):
 
 
 class DecoderV3(nn.Sequential):
+    """Decoder for DeepLabV3, consisting of a double convolution and a direct 16X upsampling.
+    This is clearly not the best for performance, but, if memory is a problem, this can save a little space.
+    """
 
     def __init__(self,
                  output_stride: int = 16,
@@ -131,37 +135,118 @@ class DecoderV3(nn.Sequential):
             nn.Upsample(scale_factor=output_stride, mode="bilinear", align_corners=True))
 
 
-class DeepLab(nn.Module):
-    """Generic DeepLab class that provides three inputs for the main block of the architecture,
-    This provides a custom initialization when needed, otherwise it is advisable to use the specific
-    V3 or V3Plus implementations.
+class DecoderV3Plus(nn.Module):
+    """DeepLabV3+ decoder branch, with a skip branch embedding low level
+    features (higher resolution) into the highly dimensional output. This typically
+    produces much better results than a naive 16x upsampling.
+    Original paper: https://arxiv.org/abs/1802.02611
     """
 
-    def __init__(self, backbone: Backbone, aspp: nn.Module, decoder: nn.Module):
-        """Creates a new deeplab network, where the three main components need to be provided as input
-        The output stride of the submodules *must* match.
+    def __init__(self,
+                 low_level_channels: int,
+                 output_stride: int = 16,
+                 output_channels: int = 1,
+                 batch_norm: Type[nn.Module] = nn.BatchNorm2d):
+        """Returns a new Decoder for DeepLabV3+.
+        The upsampling is divided into two parts: a fixed 4x from 128 to 512, and a 2x or 4x
+        from 32 or 64 (when input=512x512) to 128, depending on the output stride.
 
-        :param backbone: standard headless CNN to be used as backbone (typically ResNet101)
-        :type backbone: Type[Backbone]
-        :param aspp: Atrous Spatial Pyramid Pooling, required to sample features at different scales
-        :type aspp: Type[nn.Module]
-        :param decoder: network head that transforms semantic information into a pixel-level mask
-        :type decoder: nn.Module
+        :param low_level_channels: how many channels on the lo-level skip branch
+        :type low_level_channels: int
+        :param output_stride: downscaling factor of the backbone, defaults to 16
+        :type output_stride: int, optional
+        :param output_channels: how many outputs, defaults to 1
+        :type output_channels: int, optional
+        :param batch_norm: batch normalization module, defaults to nn.BatchNorm2d
+        :type batch_norm: Type[nn.Module], optional
         """
         super().__init__()
-        self.backbone = backbone
-        self.aspp = aspp
-        self.decoder = decoder
+        low_up_factor = 4
+        high_up_factor = output_stride / low_up_factor
+        self.low_level = nn.Sequential(
+            nn.Conv2d(low_level_channels, 48, 1, bias=False),
+            batch_norm(48),
+            nn.ReLU(inplace=True))
+        self.upsample = nn.Upsample(scale_factor=high_up_factor, mode="bilinear", align_corners=True)
+
+        # Table 2, best performance with two 3x3 convs
+        self.output = nn.Sequential(
+            nn.Conv2d(48+256, 256, 3, stride=1, padding=1, bias=False),
+            batch_norm(256),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(256, 256, 3, stride=1, padding=1, bias=False),
+            batch_norm(256),
+            nn.ReLU(inplace=True),
+            nn.Dropout(0.1),
+            nn.Conv2d(256, output_channels, 1, stride=1),
+            nn.Upsample(scale_factor=low_up_factor, mode="bilinear", align_corners=True)
+        )
+
+    def forward(self, x: torch.Tensor, skip: torch.Tensor) -> torch.Tensor:
+        """Forward pass on the decoder. Low-level features 'skip' are processed and merged
+        with the upsampled high-level features 'x'. The output then restores the tensor
+        to the original height and width.
+
+        :param x: high-level features, [batch, 2048, X, X], where X = input size / output stride
+        :type x: torch.Tensor
+        :param skip: low-level features, [batch, Y, 128, 128] where Y = 256 for ResNet, 128 for Xception
+        :type skip: torch.Tensor
+        :return: tensor with the final output, [batch, classes, input height, input width]
+        :rtype: torch.Tensor
+        """
+        skip = self.low_level(skip)
+        x = self.upsample(x)
+        return self.output(torch.cat((skip, x), dim=1))
 
 
 class DeepLabVariants(Enum):
+    """Enum defining possible combinations of backbones and strides.
+    Currently, only ResNet and Xception are supported as backbones.
+    """
     RESNET50_16 = (rn.ResNetVariants.RN50, rn.OutputStrides.OS16, ASPPVariants.OS16)
     RESNET50_08 = (rn.ResNetVariants.RN50, rn.OutputStrides.OS08, ASPPVariants.OS08)
     RESNET101_16 = (rn.ResNetVariants.RN101, rn.OutputStrides.OS16, ASPPVariants.OS16)
     RESNET101_08 = (rn.ResNetVariants.RN101, rn.OutputStrides.OS08, ASPPVariants.OS08)
+    XCEPTION08_16 = (xc.MiddleFlows.MF08, xc.OutputStrides.OS16, ASPPVariants.OS16)
+    XCEPTION08_08 = (xc.MiddleFlows.MF08, xc.OutputStrides.OS08, ASPPVariants.OS08)
+    XCEPTION16_16 = (xc.MiddleFlows.MF16, xc.OutputStrides.OS16, ASPPVariants.OS16)
+    XCEPTION16_08 = (xc.MiddleFlows.MF16, xc.OutputStrides.OS08, ASPPVariants.OS08)
 
 
-class DeepLabV3(DeepLab):
+class DeepLabBase(nn.Module):
+    """Generic DeepLab class that provides three inputs for the main block of the architecture,
+    This provides a custom initialization when needed, otherwise it is advisable to use the specific
+    V3 or V3Plus implementations."""
+
+    def __init__(self,
+                 in_channels: int,
+                 in_dimension: int,
+                 out_channels: int,
+                 variant: DeepLabVariants = DeepLabVariants.RESNET101_16,
+                 batch_norm: Type[nn.Module] = nn.BatchNorm2d):
+        super().__init__()
+        assert out_channels > 0, "Please provide a valid number of classes!"
+        backbone_variant, output_strides, aspp_variant = variant.value
+        backbone_name = variant.name.lower()
+        if backbone_name.startswith("resnet"):
+            backbone = rn.ResNetBackbone(variant=backbone_variant,
+                                         batch_norm=batch_norm,
+                                         output_strides=output_strides,
+                                         in_channels=in_channels)
+        elif backbone_name.startswith("xception"):
+            backbone = xc.XceptionBackbone(in_channels=in_channels,
+                                           output_strides=output_strides,
+                                           middle_flow=backbone_variant,
+                                           batch_norm=batch_norm)
+        output_dims = in_dimension // backbone.scaling_factor()
+        features_high, _ = backbone.output_features()
+        self.backbone = backbone
+        self.aspp = ASPPModule(in_tensor=(features_high, output_dims, output_dims),
+                               variant=aspp_variant,
+                               batch_norm=batch_norm)
+
+
+class DeepLabV3(DeepLabBase):
     """Deeplab V3 implementation: considering previous iterations V3 introduces a more modular
     concept of feature encoder, called 'backbone', and improves the ASPP module with more convolutions
     and global pooling. The CRF is also removed from the official implementation details.
@@ -173,28 +258,65 @@ class DeepLabV3(DeepLab):
                  out_channels: int = 1,
                  variant: DeepLabVariants = DeepLabVariants.RESNET101_16,
                  batch_norm: Type[nn.Module] = nn.BatchNorm2d):
-        backbone_variant, output_strides, aspp_variant = variant.value
-        backbone = rn.ResNetBackbone(variant=backbone_variant,
-                                     batch_norm=batch_norm,
-                                     output_strides=output_strides,
-                                     in_channels=in_channels)
-        output_dims = in_dimension // backbone.scaling_factor()
-        output_features = backbone.output_features()
-        aspp = ASPPModule(in_tensor=(output_features, output_dims, output_dims),
-                          variant=aspp_variant,
-                          batch_norm=batch_norm)
-        decoder = DecoderV3(output_stride=backbone.scaling_factor(),
-                            output_channels=out_channels,
-                            batch_norm=batch_norm)
-        super().__init__(backbone, aspp, decoder)
+        super().__init__(in_channels=in_channels,
+                         in_dimension=in_dimension,
+                         out_channels=out_channels,
+                         variant=variant,
+                         batch_norm=batch_norm)
+        self.decoder = DecoderV3(output_stride=self.backbone.scaling_factor(),
+                                 output_channels=out_channels,
+                                 batch_norm=batch_norm)
 
     def forward(self, batch: torch.Tensor) -> torch.Tensor:
+        """Computes a forward pass on the whole DeepLab.
+        In V3, the low-level features are not used by the other components.
+
+        :param batch: input tensor, [batch, channels, height, width]
+        :type batch: torch.Tensor
+        :return: tensor with size [batch, classes, height, width]
+        :rtype: torch.Tensor
+        """
         x, _ = self.backbone(batch)
         x = self.aspp(x)
         return self.decoder(x)
 
 
+class DeepLabV3Plus(DeepLabBase):
+    """DeepLabV3Plus implementation, almost the same as V3, but with a much better decoding branch.
+    """
+
+    def __init__(self,
+                 in_channels: int = 3,
+                 in_dimension: int = 512,
+                 out_channels: int = 1,
+                 variant: DeepLabVariants = DeepLabVariants.XCEPTION16_16,
+                 batch_norm: Type[nn.Module] = nn.BatchNorm2d):
+        super().__init__(in_channels=in_channels,
+                         in_dimension=in_dimension,
+                         out_channels=out_channels,
+                         variant=variant,
+                         batch_norm=batch_norm)
+        _, features_low = self.backbone.output_features()
+        self.decoder = DecoderV3Plus(low_level_channels=features_low,
+                                     output_stride=self.backbone.scaling_factor(),
+                                     output_channels=out_channels,
+                                     batch_norm=batch_norm)
+
+    def forward(self, batch: torch.Tensor) -> torch.Tensor:
+        """Computes a forward pass on the whole network.
+        In V3+, the low-level features are integrated for a high resolution mask.
+
+        :param batch: input tensor, [batch, channels, height, width]
+        :type batch: torch.Tensor
+        :return: tensor with size [batch, classes, height, width]
+        :rtype: torch.Tensor
+        """
+        x, skip = self.backbone(batch)
+        x = self.aspp(x)
+        return self.decoder(x, skip)
+
+
 if __name__ == "__main__":
-    x = torch.rand((2, 3, 512, 512))
-    deeplab = DeepLabV3(out_channels=10)
+    x = torch.rand((2, 3, 480, 480))
+    deeplab = DeepLabV3Plus(out_channels=10, in_dimension=480, variant=DeepLabVariants.XCEPTION08_16)
     print(deeplab(x).size())

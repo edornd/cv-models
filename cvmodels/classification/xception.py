@@ -1,11 +1,10 @@
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
-from typing import List
 
 
 class SeparableConv2d(nn.Module):
-    """TODO
+    """Separable Depthwise convolution, with added batch normalization, required for DeepLabV3+
     """
 
     def __init__(self,
@@ -13,6 +12,7 @@ class SeparableConv2d(nn.Module):
                  out_channels: int,
                  kernel_size: int = 3,
                  stride: int = 1,
+                 padding: int = 0,
                  dilation: int = 1,
                  bias: bool = False):
         """TODO
@@ -25,6 +25,8 @@ class SeparableConv2d(nn.Module):
         :type kernel_size: int, optional
         :param stride: stride for the convolution, defaults to 1
         :type stride: int, optional
+        :param padding: padding for the convolution, defaults to 0
+        :type padding: int, optional
         :param dilation: dilation of the convolution, defaults to 1
         :type dilation: int, optional
         :param bias: whether to include the bias or not, defaults to False
@@ -35,12 +37,12 @@ class SeparableConv2d(nn.Module):
         self.conv1 = nn.Conv2d(in_channels,
                                in_channels,
                                kernel_size,
-                               stride,
+                               stride=stride,
                                padding=padding,
                                dilation=dilation,
                                groups=in_channels,
                                bias=bias)
-        self.pointwise = nn.Conv2d(in_channels, out_channels, 1, 1, bias=bias)
+        self.pointwise = nn.Conv2d(in_channels, out_channels, 1, 1, 0, 1, 1, bias=bias)
 
     def forward(self, batch: torch.Tensor) -> torch.Tensor:
         x = self.conv1(batch)
@@ -55,10 +57,10 @@ class XceptionBlock(nn.Module):
     def __init__(self,
                  in_channels: int,
                  out_channels: int,
-                 stride: int = 1,
-                 dilation: int = 1,
-                 exit_flow: bool = False,
-                 use_first_relu: bool = True,
+                 repetitions: int,
+                 strides: int = 1,
+                 grow_first: bool = True,
+                 start_with_relu: bool = True,
                  batch_norm: nn.Module = nn.BatchNorm2d):
         """TODO
 
@@ -66,78 +68,53 @@ class XceptionBlock(nn.Module):
         :type in_channels: int
         :param out_channels: number of output channels for the current block
         :type out_channels: int
-        :param stride: stride for the block, defaults to 1
-        :type stride: int, optional
-        :param dilation: dilation for the block, defaults to 1
-        :type dilation: int, optional
+        :param strides: stride for the block, defaults to 1
+        :type strides: int, optional
+        :param repetitions: how many repetitions for the block
+        :type repetitions: int
         :param exit_flow: whether to include the exit flow, defaults to False
         :type exit_flow: bool, optional
-        :param use_first_relu: whether to use the first ReLU, defaults to True
-        :type use_first_relu: bool, optional
+        :param start_with_relu: whether to use the first ReLU, defaults to True
+        :type start_with_relu: bool, optional
         :param batch_norm: batch normalization module, defaults to nn.BatchNorm2d
         :type batch_norm: nn.Module, optional
         """
         super(XceptionBlock, self).__init__()
-
-        if in_channels != out_channels or stride != 1:
-            self.skip = nn.Sequential(nn.Conv2d(in_channels, out_channels, 1, stride=stride, bias=False),
+        # add a skip layer when changing output filters
+        if out_channels != in_channels or strides != 1:
+            self.skip = nn.Sequential(nn.Conv2d(in_channels, out_channels, 1, stride=strides, bias=False),
                                       batch_norm(out_channels))
         else:
             self.skip = nn.Identity()
-        repetitions = self._conv_block(in_channels, out_channels, 3, stride=1,
-                                       dilation=dilation, batch_norm=batch_norm)
-        repetitions.extend(self._conv_block(out_channels, out_channels, 3, stride=1,
-                                            dilation=dilation, batch_norm=batch_norm))
-        repetitions.extend(self._conv_block(out_channels, out_channels, 3, stride=stride,
-                                            dilation=dilation, batch_norm=batch_norm))
-        if exit_flow:
-            repetitions[3:6] = repetitions[:3]
-            repetitions[:3] = self._conv_block(in_channels,
-                                               in_channels,
-                                               3,
-                                               stride=1,
-                                               dilation=dilation,
-                                               batch_norm=batch_norm)
-        if not use_first_relu:
-            repetitions = repetitions[1:]
-        self.rep = nn.Sequential(*repetitions)
 
-    def _conv_block(self,
-                    in_channels: int,
-                    out_channels: int,
-                    kernel: int,
-                    stride: int,
-                    dilation: int,
-                    bias: bool = False,
-                    batch_norm: nn.Module = nn.BatchNorm2d) -> List[nn.Module]:
-        """Builds a convolutional block (relu + conv2d + bn) using the given parameters.
+        rep = []
+        filters = in_channels
+        if grow_first:
+            rep.append(nn.ReLU(inplace=True))
+            rep.append(SeparableConv2d(in_channels, out_channels, 3, stride=1, padding=1, bias=False))
+            rep.append(batch_norm(out_channels))
+            filters = out_channels
 
-        :param in_channels: input channel count
-        :type in_channels: int
-        :param out_channels: output channel count
-        :type out_channels: int
-        :param kernel: kernel size for the conv. layer
-        :type kernel: int
-        :param stride: stride for the conv. layer
-        :type stride: int
-        :param dilation: dilation of the conv. layer
-        :type dilation: int
-        :param bias: whether to include a bias or not, defaults to False
-        :type bias: bool, optional
-        :param batch_norm: batch normalization module, defaults to nn.BatchNorm2d
-        :type batch_norm: nn.Module, optional
-        :return: list composed of (ReLU, Conv2d, BatchNorm)
-        :rtype: List[nn.Module]
-        """
-        return [
-            nn.ReLU(inplace=True),
-            SeparableConv2d(in_channels, out_channels, kernel, stride=stride, dilation=dilation, bias=bias),
-            batch_norm(out_channels)
-        ]
+        for i in range(repetitions - 1):
+            rep.append(nn.ReLU(inplace=True))
+            rep.append(SeparableConv2d(filters, filters, 3, stride=1, padding=1, bias=False))
+            rep.append(batch_norm(filters))
 
-    def forward(self, x):
-        output = self.rep(x)
-        skip = self.skip(x)
+        if not grow_first:
+            rep.append(nn.ReLU(inplace=True))
+            rep.append(SeparableConv2d(in_channels, out_channels, 3, stride=1, padding=1, bias=False))
+            rep.append(batch_norm(out_channels))
+
+        if not start_with_relu:
+            rep = rep[1:]
+
+        if strides != 1:
+            rep.append(nn.MaxPool2d(3, strides, 1))
+        self.rep = nn.Sequential(*rep)
+
+    def forward(self, batch: torch.Tensor) -> torch.Tensor:
+        output = self.rep(batch)
+        skip = self.skip(batch)
         return output + skip
 
 
@@ -167,26 +144,26 @@ class Xception(nn.Module):
         self.bn2 = batch_norm(64)
         self.relu2 = nn.ReLU(inplace=True)
         # do relu here
-        self.block1 = XceptionBlock(64, 128, 2, 2, use_first_relu=False, batch_norm=batch_norm)
-        self.block2 = XceptionBlock(128, 256, 2, 2, use_first_relu=True, batch_norm=batch_norm)
-        self.block3 = XceptionBlock(256, 728, 2, 2, use_first_relu=True, batch_norm=batch_norm)
+        self.block1 = XceptionBlock(64, 128, 2, 2, start_with_relu=False, grow_first=True)
+        self.block2 = XceptionBlock(128, 256, 2, 2, start_with_relu=True, grow_first=True)
+        self.block3 = XceptionBlock(256, 728, 2, 2, start_with_relu=True, grow_first=True)
+        self.block4 = XceptionBlock(728, 728, 3, 1, start_with_relu=True, grow_first=True)
+        self.block5 = XceptionBlock(728, 728, 3, 1, start_with_relu=True, grow_first=True)
+        self.block6 = XceptionBlock(728, 728, 3, 1, start_with_relu=True, grow_first=True)
+        self.block7 = XceptionBlock(728, 728, 3, 1, start_with_relu=True, grow_first=True)
+        self.block8 = XceptionBlock(728, 728, 3, 1, start_with_relu=True, grow_first=True)
+        self.block9 = XceptionBlock(728, 728, 3, 1, start_with_relu=True, grow_first=True)
+        self.block10 = XceptionBlock(728, 728, 3, 1, start_with_relu=True, grow_first=True)
+        self.block11 = XceptionBlock(728, 728, 3, 1, start_with_relu=True, grow_first=True)
+        self.block12 = XceptionBlock(728, 1024, 2, 2, start_with_relu=True, grow_first=False)
 
-        self.block4 = XceptionBlock(728, 728, 3, 1, use_first_relu=True, batch_norm=batch_norm)
-        self.block5 = XceptionBlock(728, 728, 3, 1, use_first_relu=True, batch_norm=batch_norm)
-        self.block6 = XceptionBlock(728, 728, 3, 1, use_first_relu=True, batch_norm=batch_norm)
-        self.block7 = XceptionBlock(728, 728, 3, 1, use_first_relu=True, batch_norm=batch_norm)
-        self.block8 = XceptionBlock(728, 728, 3, 1, use_first_relu=True, batch_norm=batch_norm)
-        self.block9 = XceptionBlock(728, 728, 3, 1, use_first_relu=True, batch_norm=batch_norm)
-        self.block10 = XceptionBlock(728, 728, 3, 1, use_first_relu=True, batch_norm=batch_norm)
-        self.block11 = XceptionBlock(728, 728, 3, 1, use_first_relu=True, batch_norm=batch_norm)
-        self.block12 = XceptionBlock(728, 1024, 2, 2, use_first_relu=True, exit_flow=True, batch_norm=batch_norm)
-        # final blocks
         self.conv3 = SeparableConv2d(1024, 1536, 3, 1, 1)
         self.bn3 = batch_norm(1536)
         self.relu3 = nn.ReLU(inplace=True)
         # do relu here
         self.conv4 = SeparableConv2d(1536, 2048, 3, 1, 1)
         self.bn4 = batch_norm(2048)
+
         self.fc = nn.Linear(2048, num_classes)
 
     def features(self, batch: torch.Tensor) -> torch.Tensor:
