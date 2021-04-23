@@ -1,4 +1,4 @@
-# Computer Vision models and networks
+# Computer Vision models
 Implementations of common computer vision deep learning models.
 
 
