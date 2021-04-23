@@ -4,6 +4,8 @@ from typing import Type
 import torch
 import torch.nn as nn
 
+from cvmodels import ModuleBase
+
 
 class ResidualBlock(nn.Module):
     """Simple interface implemented by actual building blocks.
@@ -132,17 +134,25 @@ class BottleneckBlock(nn.Module):
         return x
 
 
+class PretrainedWeights(str, Enum):
+    RN18 = "https://download.pytorch.org/models/resnet18-5c106cde.pth"
+    RN34 = "https://download.pytorch.org/models/resnet34-333f7ec4.pth",
+    RN50 = "https://download.pytorch.org/models/resnet50-19c8e357.pth"
+    RN101 = "https://download.pytorch.org/models/resnet101-5d3b4d8f.pth"
+    RN152 = "https://download.pytorch.org/models/resnet152-b121ed2d.pth"
+
+
 class ResNetVariants(Enum):
     """Descriptor enum for most the common variants of residual nets.
     """
-    RN18 = ((2, 2, 2, 2), StandardBlock)  # no bottleneck
-    RN34 = ((3, 4, 6, 3), StandardBlock)  # no bottleneck
-    RN50 = ((3, 4, 6, 3), BottleneckBlock)
-    RN101 = ((3, 4, 23, 3), BottleneckBlock)
-    RN152 = ((3, 8, 36, 3), BottleneckBlock)
+    RN18 = ((2, 2, 2, 2), StandardBlock, PretrainedWeights.RN18)  # no bottleneck
+    RN34 = ((3, 4, 6, 3), StandardBlock, PretrainedWeights.RN34)  # no bottleneck
+    RN50 = ((3, 4, 6, 3), BottleneckBlock, PretrainedWeights.RN50)
+    RN101 = ((3, 4, 23, 3), BottleneckBlock, PretrainedWeights.RN101)
+    RN152 = ((3, 8, 36, 3), BottleneckBlock, PretrainedWeights.RN152)
 
 
-class ResNet(nn.Module):
+class ResNet(ModuleBase):
     """Implementation of a Deep residual Network, following the original paper https://arxiv.org/abs/1512.03385
     The architecture follows a dynamic organization, where the final network structure can be tuned via parameters.
     """
@@ -151,7 +161,8 @@ class ResNet(nn.Module):
                  variant: ResNetVariants = ResNetVariants.RN101,
                  batch_norm: Type[nn.Module] = nn.BatchNorm2d,
                  in_channels: int = 3,
-                 num_classes: int = 1000):
+                 num_classes: int = 1000,
+                 pretrained: bool = False):
         """Creates a new ResNet model, with the given characteristics.
 
         :param layers: list of block count for each layer. A layer defines a group of identical residual blocks.
@@ -165,9 +176,11 @@ class ResNet(nn.Module):
         :type in_channels:  int, optional
         :param num_classes: Number of categories, final output dimension, defaults to 1000 (ILSVRC)
         :type num_classes:  enum, since only two options are typically available
+        :param pretrained: Whether to load a pretrained checkpoint or start anew
+        :type pretrained:  bool
         """
         super(ResNet, self).__init__()
-        layers, block = variant.value
+        layers, block, pretrained_url = variant.value
         self.batch_norm = batch_norm or nn.BatchNorm2d
         # input layers
         self.curr_channels = 64
@@ -176,21 +189,23 @@ class ResNet(nn.Module):
         self.relu = nn.ReLU(inplace=True)
         self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
         # residual layers, out_channels will be mapped to outx4
-        self.layer1 = self.residual_group(block, batch_norm, layers[0], 64, stride=1)
-        self.layer2 = self.residual_group(block, batch_norm, layers[1], 128, stride=2)
-        self.layer3 = self.residual_group(block, batch_norm, layers[2], 256, stride=2)
-        self.layer4 = self.residual_group(block, batch_norm, layers[3], 512, stride=2)
+        self.layer1 = self._residual_group(block, batch_norm, layers[0], 64, stride=1)
+        self.layer2 = self._residual_group(block, batch_norm, layers[1], 128, stride=2)
+        self.layer3 = self._residual_group(block, batch_norm, layers[2], 256, stride=2)
+        self.layer4 = self._residual_group(block, batch_norm, layers[3], 512, stride=2)
         # final classifier
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
-        self.linear = nn.Linear(512 * block.expansion, num_classes)
+        self.fc = nn.Linear(512 * block.expansion, num_classes)
+        if pretrained:
+            self._from_pretrained(pretrained_url)
 
-    def residual_group(self,
-                       block: Type[ResidualBlock],
-                       batch_norm: Type[nn.Module],
-                       residual_blocks: int,
-                       out_channels: int,
-                       stride: int = 1,
-                       dilation: int = 1) -> nn.Sequential:
+    def _residual_group(self,
+                        block: Type[ResidualBlock],
+                        batch_norm: Type[nn.Module],
+                        residual_blocks: int,
+                        out_channels: int,
+                        stride: int = 1,
+                        dilation: int = 1) -> nn.Sequential:
         """Builds a full ResNet layer/group, identified with blocks with the same color in most graphs.
         In some groups the input dimension and the output dimension are kept equal, but in case of stride
         or different channel count an additional downsampling 1x1 convolution is required.
@@ -228,7 +243,7 @@ class ResNet(nn.Module):
                   batch_norm=batch_norm))
         self.curr_channels = scaled_output
         # append the other required layers, starting from 1
-        for i in range(1, residual_blocks):
+        for _ in range(1, residual_blocks):
             layers.append(block(self.curr_channels, out_channels, dilation=dilation, batch_norm=batch_norm))
         return nn.Sequential(*layers)
 
@@ -252,12 +267,92 @@ class ResNet(nn.Module):
         x = self.layer4(x)
         # final classifier, flatten but not the batch
         x = self.avgpool(x)
-        x = self.linear(torch.flatten(x, start_dim=1))
+        x = self.fc(torch.flatten(x, start_dim=1))
         return x
+
+
+class ResNet18(ResNet):
+    """Wrapper around the main ResNet class, providing default params for ResNet18.
+    """
+
+    def __init__(self,
+                 batch_norm: Type[nn.Module] = nn.BatchNorm2d,
+                 in_channels: int = 3,
+                 num_classes: int = 1000,
+                 pretrained: bool = True):
+        super().__init__(variant=ResNetVariants.RN18,
+                         batch_norm=batch_norm,
+                         in_channels=in_channels,
+                         num_classes=num_classes,
+                         pretrained=pretrained)
+
+
+class ResNet34(ResNet):
+    """Wrapper around the main ResNet class, providing default params for ResNet34.
+    """
+
+    def __init__(self,
+                 batch_norm: Type[nn.Module] = nn.BatchNorm2d,
+                 in_channels: int = 3,
+                 num_classes: int = 1000,
+                 pretrained: bool = True):
+        super().__init__(variant=ResNetVariants.RN34,
+                         batch_norm=batch_norm,
+                         in_channels=in_channels,
+                         num_classes=num_classes,
+                         pretrained=pretrained)
+
+
+class ResNet50(ResNet):
+    """Wrapper around the main ResNet class, providing default params for ResNet50.
+    """
+
+    def __init__(self,
+                 batch_norm: Type[nn.Module] = nn.BatchNorm2d,
+                 in_channels: int = 3,
+                 num_classes: int = 1000,
+                 pretrained: bool = True):
+        super().__init__(variant=ResNetVariants.RN50,
+                         batch_norm=batch_norm,
+                         in_channels=in_channels,
+                         num_classes=num_classes,
+                         pretrained=pretrained)
+
+
+class ResNet101(ResNet):
+    """Wrapper around the main ResNet class, providing default params for ResNet101.
+    """
+
+    def __init__(self,
+                 batch_norm: Type[nn.Module] = nn.BatchNorm2d,
+                 in_channels: int = 3,
+                 num_classes: int = 1000,
+                 pretrained: bool = True):
+        super().__init__(variant=ResNetVariants.RN101,
+                         batch_norm=batch_norm,
+                         in_channels=in_channels,
+                         num_classes=num_classes,
+                         pretrained=pretrained)
+
+
+class ResNet152(ResNet):
+    """Wrapper around the main ResNet class, providing default params for ResNet152.
+    """
+
+    def __init__(self,
+                 batch_norm: Type[nn.Module] = nn.BatchNorm2d,
+                 in_channels: int = 3,
+                 num_classes: int = 1000,
+                 pretrained: bool = True):
+        super().__init__(variant=ResNetVariants.RN152,
+                         batch_norm=batch_norm,
+                         in_channels=in_channels,
+                         num_classes=num_classes,
+                         pretrained=pretrained)
 
 
 if __name__ == "__main__":
     x = torch.rand((1, 3, 224, 224))
-    model = ResNet()
+    model = ResNet(pretrained=True)
     print(model)
     print(model(x).size())

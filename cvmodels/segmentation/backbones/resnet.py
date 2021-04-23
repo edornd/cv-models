@@ -46,9 +46,10 @@ class ResNetBackbone(ResNet, Backbone):
         self.relu = nn.ReLU(inplace=True)
         self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
         # residual layers, out_channels will be mapped to outx4
-        self.layer1 = self.residual_group(block, batch_norm, layers[0], 64, strides[0], dilations[0])
-        self.layer2 = self.residual_group(block, batch_norm, layers[1], 128, strides[1], dilations[1])
-        self.layer3 = self.residual_group(block, batch_norm, layers[2], 256, strides[2], dilations[2])
+        self.layer1 = self._residual_group(block, batch_norm, layers[0], 64, strides[0], dilations[0])
+        self.layer2 = self._residual_group(block, batch_norm, layers[1], 128, strides[1], dilations[1])
+        self.layer3 = self._residual_group(block, batch_norm, layers[2], 256, strides[2], dilations[2])
+        # note: this is different from a standard residual group, it has a final extra layer
         self.layer4 = self.backbone_group(block, batch_norm, 512, stride=strides[3], dilation=dilations[3])
 
     def scaling_factor(self) -> int:
@@ -100,7 +101,7 @@ class ResNetBackbone(ResNet, Backbone):
                   batch_norm=batch_norm))
         self.curr_channels = scaled_output
         # append the other required layers, starting from 1
-        for b in residual_blocks:
+        for b in residual_blocks[1:]:
             layers.append(block(self.curr_channels, out_channels, dilation=b*dilation, batch_norm=batch_norm))
         return nn.Sequential(*layers)
 

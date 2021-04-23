@@ -1,9 +1,10 @@
 from typing import Tuple
 from torch import Tensor
-import torch.nn as nn
+
+from cvmodels import ModuleBase
 
 
-class Backbone(nn.Module):
+class Backbone(ModuleBase):
     """Definition for every backbone module
     """
 
