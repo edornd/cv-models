@@ -40,6 +40,8 @@ Models for semantic and/or instance segmentation, including backbones when neces
 
 
 ### Current models
-- UNet
-- DeepLabV3
-- DeepLabV3+
+| Model                 |
+|-----------------------|
+| UNet                  |
+| DeepLabV3             |
+| DeepLabV3+            |
