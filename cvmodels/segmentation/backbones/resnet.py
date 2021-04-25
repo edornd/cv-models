@@ -20,23 +20,26 @@ class ResNetBackbone(ResNet, Backbone):
     """
 
     def __init__(self,
+                 in_channels: int = 3,
                  variant: ResNetVariants = ResNetVariants.RN101,
                  batch_norm: Type[nn.Module] = nn.BatchNorm2d,
                  output_strides: OutputStrides = OutputStrides.OS16,
-                 in_channels: int = 3):
+                 pretrained: bool = False):
         """Creates a new instance of Residual Network as a segmentation backbone.
 
+        :param in_channels: how many channels for the input images, defaults to 3
+        :type in_channels: int, optional
         :param variant: Which variant of ResNet to build (sets the basic block), defaults to ResNetVariants.RN101
         :type variant: ResNetVariants, optional
         :param batch_norm: which batch normalization class, defaults to nn.BatchNorm2d
         :type batch_norm: Type[nn.Module], optional
         :param output_strides: [description], defaults to OutputStrides.OS16
         :type output_strides: OutputStrides, optional
-        :param in_channels: how many channels for the input images, defaults to 3
-        :type in_channels: int, optional
+        :param pretrained: Whether to load a pretrained checkpoint or start anew
+        :type pretrained:  bool
         """
         super(ResNet, self).__init__()
-        layers, block = variant.value
+        layers, block, pretrained_url = variant.value
         strides, dilations = output_strides.value
         # input layers
         self.output_stride = 16 if output_strides == OutputStrides.OS16 else 8
@@ -51,6 +54,8 @@ class ResNetBackbone(ResNet, Backbone):
         self.layer3 = self._residual_group(block, batch_norm, layers[2], 256, strides[2], dilations[2])
         # note: this is different from a standard residual group, it has a final extra layer
         self.layer4 = self.backbone_group(block, batch_norm, 512, stride=strides[3], dilation=dilations[3])
+        if pretrained:
+            self._from_pretrained(pretrained_url)
 
     def scaling_factor(self) -> int:
         return self.output_stride
@@ -134,7 +139,7 @@ if __name__ == "__main__":
     Simple test that can be run as module.
     """
     x = torch.rand((1, 3, 512, 512))
-    model = ResNetBackbone(variant=ResNetVariants.RN50, output_strides=OutputStrides.OS16)
+    model = ResNetBackbone(variant=ResNetVariants.RN152, output_strides=OutputStrides.OS16)
     model.eval()
     with torch.no_grad():
         a, b = model(x)

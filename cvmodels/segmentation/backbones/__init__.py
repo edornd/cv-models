@@ -1,7 +1,11 @@
+import logging
 from typing import Tuple
 from torch import Tensor
 
 from cvmodels import ModuleBase
+
+
+LOG = logging.getLogger(__name__)
 
 
 class Backbone(ModuleBase):

@@ -1,4 +1,3 @@
-import logging
 from collections import OrderedDict
 from enum import Enum
 from typing import Tuple
@@ -8,10 +7,7 @@ import torch.nn as nn
 from torch.nn import functional as F
 
 from cvmodels.functional import fixed_padding
-from cvmodels.segmentation.backbones import Backbone
-
-LOG = logging.getLogger(__name__)
-PRETRAINED_URL = "http://data.lip6.fr/cadene/pretrainedmodels/xception-b5690688.pth"
+from cvmodels.segmentation.backbones import Backbone, LOG
 
 
 class OutputStrides(Enum):
@@ -26,6 +22,16 @@ class MiddleFlows(Enum):
     """
     MF16 = 16
     MF08 = 8
+
+
+class PretrainedWeights(str, Enum):
+    MF16 = "https://github.com/edornd/cv-models/releases/download/v0.1-xception/xception-backbone-m16-b5690688.pth"
+    MF08 = "https://github.com/edornd/cv-models/releases/download/v0.1-xception/xception-backbone-m08-b5690688.pth"
+
+
+class XceptionVariants(Enum):
+    MF16 = (MiddleFlows.MF16, PretrainedWeights.MF16)
+    MF08 = (MiddleFlows.MF08, PretrainedWeights.MF08)
 
 
 class SeparableConv2d(nn.Module):
@@ -130,11 +136,12 @@ class XceptionBackbone(Backbone):
 
     def __init__(self,
                  in_channels: int = 3,
-                 output_strides: OutputStrides = OutputStrides.OS16,
-                 middle_flow: MiddleFlows = MiddleFlows.MF16,
+                 output_strides: OutputStrides = OutputStrides.OS08,
+                 variant: XceptionVariants = XceptionVariants.MF16,
                  batch_norm: nn.Module = nn.BatchNorm2d,
                  pretrained: bool = True):
         super(XceptionBackbone, self).__init__()
+        middle_flow, pretrain_url = variant.value
         # if the number of input channels is not 3, warn the user
         if in_channels != 3 and pretrained:
             LOG.warning("Using a number of input channels != 3 with pretrained model, are you sure?")
@@ -152,6 +159,7 @@ class XceptionBackbone(Backbone):
         self.block2 = XceptionBlock(128, 256, 2, stride=2, batch_norm=batch_norm, start_with_relu=True, grow_first=True)
         self.block3 = XceptionBlock(256, 728, 2, stride=block3_stride, batch_norm=batch_norm,
                                     start_with_relu=True, grow_first=True, is_last=True)
+
         # Middle flow, dynamic count of modules
         middle_blocks = []
         for i in range(middle_flow.value):
@@ -160,6 +168,7 @@ class XceptionBackbone(Backbone):
                                   start_with_relu=True, grow_first=True)
             middle_blocks.append((name, block))
         self.mid_flow = nn.Sequential(OrderedDict(middle_blocks))
+
         # Exit flow
         self.exit_block = XceptionBlock(728, 1024, 2, stride=1, dilation=end_dilation[0], batch_norm=batch_norm,
                                         start_with_relu=True, grow_first=False, is_last=True)
@@ -169,6 +178,8 @@ class XceptionBackbone(Backbone):
         self.bn4 = batch_norm(1536)
         self.conv5 = SeparableConv2d(1536, 2048, 3, stride=1, dilation=end_dilation[1], batch_norm=batch_norm)
         self.bn5 = batch_norm(2048)
+        if pretrained:
+            self._from_pretrained(pretrain_url.value)
 
     def scaling_factor(self) -> int:
         return self.output_stride
@@ -211,9 +222,9 @@ if __name__ == "__main__":
     """
     x = torch.rand((1, 3, 512, 512))
     model = XceptionBackbone(in_channels=3,
-                             output_strides=OutputStrides.OS08,
-                             middle_flow=MiddleFlows.MF08,
-                             pretrained=False)
+                             output_strides=OutputStrides.OS16,
+                             variant=XceptionVariants.MF08,
+                             pretrained=True)
     model.eval()
     with torch.no_grad():
         a, b = model(x)

@@ -114,17 +114,3 @@ class UNet(nn.Module):
         x = self.decoder3(x, x2)
         x = self.decoder4(x, x1)
         return self.output(x)
-
-
-def count_parameters(model):
-    return sum(p.numel() for p in model.parameters() if p.requires_grad)
-
-
-if __name__ == "__main__":
-    batch = 2
-    channels = 3
-    x = torch.rand((batch, channels, 512, 512))
-    model = UNet(bilinear=True)
-    out = model(x)
-    print(count_parameters(model))
-    print(out.size())

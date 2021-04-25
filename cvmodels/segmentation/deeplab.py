@@ -22,7 +22,7 @@ class ASPPModule(nn.Module):
     """
 
     def __init__(self,
-                 in_tensor: Tuple[int, int, int] = (2048, 32, 32),
+                 in_tensor: Tuple[int, int, int],
                  variant: ASPPVariants = ASPPVariants.OS16,
                  batch_norm: Type[nn.Module] = nn.BatchNorm2d):
         """Creates a new Atrous spatial Pyramid Pooling block. This module is responsible
@@ -207,10 +207,10 @@ class DeepLabVariants(Enum):
     RESNET50_08 = (rn.ResNetVariants.RN50, rn.OutputStrides.OS08, ASPPVariants.OS08)
     RESNET101_16 = (rn.ResNetVariants.RN101, rn.OutputStrides.OS16, ASPPVariants.OS16)
     RESNET101_08 = (rn.ResNetVariants.RN101, rn.OutputStrides.OS08, ASPPVariants.OS08)
-    XCEPTION08_16 = (xc.MiddleFlows.MF08, xc.OutputStrides.OS16, ASPPVariants.OS16)
-    XCEPTION08_08 = (xc.MiddleFlows.MF08, xc.OutputStrides.OS08, ASPPVariants.OS08)
-    XCEPTION16_16 = (xc.MiddleFlows.MF16, xc.OutputStrides.OS16, ASPPVariants.OS16)
-    XCEPTION16_08 = (xc.MiddleFlows.MF16, xc.OutputStrides.OS08, ASPPVariants.OS08)
+    XCEPTION08_16 = (xc.XceptionVariants.MF08, xc.OutputStrides.OS16, ASPPVariants.OS16)
+    XCEPTION08_08 = (xc.XceptionVariants.MF08, xc.OutputStrides.OS08, ASPPVariants.OS08)
+    XCEPTION16_16 = (xc.XceptionVariants.MF16, xc.OutputStrides.OS16, ASPPVariants.OS16)
+    XCEPTION16_08 = (xc.XceptionVariants.MF16, xc.OutputStrides.OS08, ASPPVariants.OS08)
 
 
 class DeepLabBase(nn.Module):
@@ -222,6 +222,7 @@ class DeepLabBase(nn.Module):
                  in_channels: int,
                  in_dimension: int,
                  out_channels: int,
+                 pretrained: bool = False,
                  variant: DeepLabVariants = DeepLabVariants.RESNET101_16,
                  batch_norm: Type[nn.Module] = nn.BatchNorm2d):
         super().__init__()
@@ -232,12 +233,14 @@ class DeepLabBase(nn.Module):
             backbone = rn.ResNetBackbone(variant=backbone_variant,
                                          batch_norm=batch_norm,
                                          output_strides=output_strides,
-                                         in_channels=in_channels)
+                                         in_channels=in_channels,
+                                         pretrained=pretrained)
         elif backbone_name.startswith("xception"):
             backbone = xc.XceptionBackbone(in_channels=in_channels,
                                            output_strides=output_strides,
-                                           middle_flow=backbone_variant,
-                                           batch_norm=batch_norm)
+                                           variant=backbone_variant,
+                                           batch_norm=batch_norm,
+                                           pretrained=pretrained)
         output_dims = in_dimension // backbone.scaling_factor()
         features_high, _ = backbone.output_features()
         self.backbone = backbone
@@ -256,12 +259,14 @@ class DeepLabV3(DeepLabBase):
                  in_channels: int = 3,
                  in_dimension: int = 512,
                  out_channels: int = 1,
+                 pretrained: bool = False,
                  variant: DeepLabVariants = DeepLabVariants.RESNET101_16,
                  batch_norm: Type[nn.Module] = nn.BatchNorm2d):
         super().__init__(in_channels=in_channels,
                          in_dimension=in_dimension,
                          out_channels=out_channels,
                          variant=variant,
+                         pretrained=pretrained,
                          batch_norm=batch_norm)
         self.decoder = DecoderV3(output_stride=self.backbone.scaling_factor(),
                                  output_channels=out_channels,
@@ -289,12 +294,14 @@ class DeepLabV3Plus(DeepLabBase):
                  in_channels: int = 3,
                  in_dimension: int = 512,
                  out_channels: int = 1,
+                 pretrained: bool = False,
                  variant: DeepLabVariants = DeepLabVariants.XCEPTION16_16,
                  batch_norm: Type[nn.Module] = nn.BatchNorm2d):
         super().__init__(in_channels=in_channels,
                          in_dimension=in_dimension,
                          out_channels=out_channels,
                          variant=variant,
+                         pretrained=pretrained,
                          batch_norm=batch_norm)
         _, features_low = self.backbone.output_features()
         self.decoder = DecoderV3Plus(low_level_channels=features_low,
@@ -318,5 +325,5 @@ class DeepLabV3Plus(DeepLabBase):
 
 if __name__ == "__main__":
     x = torch.rand((2, 3, 480, 480))
-    deeplab = DeepLabV3Plus(out_channels=10, in_dimension=480, variant=DeepLabVariants.XCEPTION08_16)
+    deeplab = DeepLabV3Plus(out_channels=10, in_dimension=480, variant=DeepLabVariants.RESNET101_16, pretrained=True)
     print(deeplab(x).size())
