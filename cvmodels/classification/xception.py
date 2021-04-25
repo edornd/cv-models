@@ -2,6 +2,11 @@ import torch
 import torch.nn as nn
 from torch.nn import functional as F
 
+from cvmodels import ModuleBase
+
+
+PRETRAINED_URL = "https://github.com/edornd/cv-models/releases/download/v0.1-xception/xception-custom-43020ad28.pth"
+
 
 class SeparableConv2d(nn.Module):
     """Separable Depthwise convolution, with added batch normalization, required for DeepLabV3+
@@ -118,12 +123,16 @@ class XceptionBlock(nn.Module):
         return output + skip
 
 
-class Xception(nn.Module):
+class Xception(ModuleBase):
     """
     Xception optimized for the ImageNet dataset, as specified in https://arxiv.org/pdf/1610.02357.pdf
     """
 
-    def __init__(self, in_channels: int = 3, num_classes: int = 1000, batch_norm: nn.Module = nn.BatchNorm2d):
+    def __init__(self,
+                 in_channels: int = 3,
+                 num_classes: int = 1000,
+                 batch_norm: nn.Module = nn.BatchNorm2d,
+                 pretrained: bool = False):
         """Constructs a new XCeption model, with the given output and input.
 
         :param in_channels: number of input channels, defaults to 3 (RGB)
@@ -132,14 +141,14 @@ class Xception(nn.Module):
         :type num_classes: int, optional
         :param batch_norm: batch normalization layer, defaults to nn.BatchNorm2d
         :type batch_norm: nn.module, optional
+        :param pretrained: whether to use pretrained weights or not
+        :type pretrained: bool
         """
         super(Xception, self).__init__()
         self.num_classes = num_classes
-
         self.conv1 = nn.Conv2d(in_channels, 32, 3, 2, 0, bias=False)
         self.bn1 = batch_norm(32)
         self.relu1 = nn.ReLU(inplace=True)
-
         self.conv2 = nn.Conv2d(32, 64, 3, bias=False)
         self.bn2 = batch_norm(64)
         self.relu2 = nn.ReLU(inplace=True)
@@ -156,15 +165,15 @@ class Xception(nn.Module):
         self.block10 = XceptionBlock(728, 728, 3, 1, start_with_relu=True, grow_first=True)
         self.block11 = XceptionBlock(728, 728, 3, 1, start_with_relu=True, grow_first=True)
         self.block12 = XceptionBlock(728, 1024, 2, 2, start_with_relu=True, grow_first=False)
-
         self.conv3 = SeparableConv2d(1024, 1536, 3, 1, 1)
         self.bn3 = batch_norm(1536)
         self.relu3 = nn.ReLU(inplace=True)
         # do relu here
         self.conv4 = SeparableConv2d(1536, 2048, 3, 1, 1)
         self.bn4 = batch_norm(2048)
-
         self.fc = nn.Linear(2048, num_classes)
+        if pretrained:
+            self._from_pretrained(PRETRAINED_URL)
 
     def features(self, batch: torch.Tensor) -> torch.Tensor:
         x = self.conv1(batch)
@@ -213,8 +222,8 @@ if __name__ == "__main__":
     """
     Simple test that can be run as module.
     """
-    x = torch.rand((1, 3, 512, 512))
+    x = torch.rand((1, 3, 224, 224))
     with torch.no_grad():
-        model = Xception(in_channels=3, num_classes=10)
+        model = Xception(in_channels=3, num_classes=1000, pretrained=True)
         model.eval()
         print(model(x).size())

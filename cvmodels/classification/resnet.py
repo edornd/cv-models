@@ -12,13 +12,13 @@ class ResidualBlock(nn.Module):
     """
 
 
-class StandardBlock(nn.Module):
+class StandardBlock(ResidualBlock):
     """Implementation of the basic building block of a residual network.
     The module is double conv. (3x3, 3x3), followed by the addition of the (possibly scaled) input.
     Expansion is a static property of residual blocks, indicating the channel growth factor in output.
     This is the standard version of the block, without bottleneck.
     """
-    expansion = 4
+    expansion = 1
 
     def __init__(self,
                  in_channels: int,
@@ -28,15 +28,16 @@ class StandardBlock(nn.Module):
                  downsample: nn.Module = None,
                  batch_norm: Type[nn.Module] = nn.BatchNorm2d):
         super(StandardBlock, self).__init__()
-        batch_norm = batch_norm or nn.BatchNorm2d
-        self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=stride, dilation=dilation, bias=False)
+        self.conv1 = nn.Conv2d(in_channels, out_channels, 3, stride=stride,
+                               dilation=dilation, padding=dilation, bias=False)
         self.bn1 = batch_norm(out_channels)
-        self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, bias=False)
+        self.conv2 = nn.Conv2d(out_channels, out_channels, 3,
+                               dilation=dilation, padding=dilation, bias=False)
         self.bn2 = batch_norm(out_channels)
         self.relu = nn.ReLU(inplace=True)
         self.downsample = downsample or nn.Identity()
 
-    def forward(self, batch):
+    def forward(self, batch: torch.Tensor) -> torch.Tensor:
         """Computes the forward pass onthe residual block.
         The input is temporarily stored in the 'residual' variable so that it can be used later.
         The downsample is an identity if no layer was passed during initialization.
@@ -47,17 +48,16 @@ class StandardBlock(nn.Module):
         :rtype: torch.Tensor
         """
         identity = batch
-        x = self.conv1(batch)
-        x = self.bn1(x)
-        x = self.relu(x)
-        x = self.conv2(x)
-        x = self.bn2(x)
-        x += self.downsample(identity)
-        x = self.relu(x)
-        return x
+        out = self.conv1(batch)
+        out = self.bn1(out)
+        out = self.relu(out)
+        out = self.conv2(out)
+        out = self.bn2(out)
+        out += self.downsample(identity)
+        return self.relu(out)
 
 
-class BottleneckBlock(nn.Module):
+class BottleneckBlock(ResidualBlock):
     """Implementation of the basic building block of a residual network.
     The module is basically a triple conv. (1x1, 3x3, 1x1), followed by the addition of the (possibly scaled) input.
     Expansion is a static property of residual blocks, indicating the channel growth factor in output.
@@ -279,7 +279,7 @@ class ResNet18(ResNet):
                  batch_norm: Type[nn.Module] = nn.BatchNorm2d,
                  in_channels: int = 3,
                  num_classes: int = 1000,
-                 pretrained: bool = True):
+                 pretrained: bool = False):
         super().__init__(variant=ResNetVariants.RN18,
                          batch_norm=batch_norm,
                          in_channels=in_channels,
@@ -295,7 +295,7 @@ class ResNet34(ResNet):
                  batch_norm: Type[nn.Module] = nn.BatchNorm2d,
                  in_channels: int = 3,
                  num_classes: int = 1000,
-                 pretrained: bool = True):
+                 pretrained: bool = False):
         super().__init__(variant=ResNetVariants.RN34,
                          batch_norm=batch_norm,
                          in_channels=in_channels,
@@ -311,7 +311,7 @@ class ResNet50(ResNet):
                  batch_norm: Type[nn.Module] = nn.BatchNorm2d,
                  in_channels: int = 3,
                  num_classes: int = 1000,
-                 pretrained: bool = True):
+                 pretrained: bool = False):
         super().__init__(variant=ResNetVariants.RN50,
                          batch_norm=batch_norm,
                          in_channels=in_channels,
@@ -327,7 +327,7 @@ class ResNet101(ResNet):
                  batch_norm: Type[nn.Module] = nn.BatchNorm2d,
                  in_channels: int = 3,
                  num_classes: int = 1000,
-                 pretrained: bool = True):
+                 pretrained: bool = False):
         super().__init__(variant=ResNetVariants.RN101,
                          batch_norm=batch_norm,
                          in_channels=in_channels,
@@ -343,7 +343,7 @@ class ResNet152(ResNet):
                  batch_norm: Type[nn.Module] = nn.BatchNorm2d,
                  in_channels: int = 3,
                  num_classes: int = 1000,
-                 pretrained: bool = True):
+                 pretrained: bool = False):
         super().__init__(variant=ResNetVariants.RN152,
                          batch_norm=batch_norm,
                          in_channels=in_channels,
