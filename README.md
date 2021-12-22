@@ -1,7 +1,9 @@
 # Computer Vision models
 Implementations of common computer vision deep learning models.
-**Update:** as expected, there are far better (and way more updated) versions out there, consider this side project archived.
-Check out the beautiful [timm](https://github.com/rwightman/pytorch-image-models) for bleeding edge encoders.
+
+> **Update:** as expected, there are far better (and way more updated) versions out there, consider this side project archived.
+> 
+> Check out the beautiful [timm](https://github.com/rwightman/pytorch-image-models) for bleeding edge encoders.
 
 **There are better versions already out there with pretrained weights, why bother?**
 
